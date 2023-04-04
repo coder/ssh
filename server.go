@@ -73,6 +73,7 @@ type Server struct {
 	conns      map[*gossh.ServerConn]struct{}
 	connWg     sync.WaitGroup
 	doneChan   chan struct{}
+	closedAt   time.Time
 }
 
 func (srv *Server) ensureHostSigner() error {
@@ -180,6 +181,8 @@ func (srv *Server) Close() error {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 
+	srv.closedAt = time.Now()
+
 	srv.closeDoneChanLocked()
 	err := srv.closeListenersLocked()
 	for c := range srv.conns {
@@ -260,6 +263,17 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 func (srv *Server) HandleConn(newConn net.Conn) {
+	// Best effort, track start time in case the server is closed
+	// between here and trackConn. If trackConn is called after the
+	// server is closed, this connection would leak.
+	//
+	// A better approach would be to have a clearer signal between the
+	// server being "started" and "closed", but that would require a
+	// larger refactor or change in logic.
+	srv.mu.RLock()
+	start := time.Now()
+	srv.mu.RUnlock()
+
 	ctx, cancel := newContext(srv)
 	if srv.ConnCallback != nil {
 		cbConn := srv.ConnCallback(ctx, newConn)
@@ -288,6 +302,14 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 
 	srv.trackConn(sshConn, true)
 	defer srv.trackConn(sshConn, false)
+
+	srv.mu.RLock()
+	if srv.closedAt.After(start) {
+		srv.mu.RUnlock()
+		sshConn.Close()
+		return
+	}
+	srv.mu.RUnlock()
 
 	ctx.SetValue(ContextKeyConn, sshConn)
 	applyConnMetadata(ctx, sshConn)
