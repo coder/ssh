@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -311,6 +312,10 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 
 func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 	for req := range in {
+		if req.Type == "keepalive@openssh.com" {
+			log.Println("handleRequests", ctx.SessionID(), req)
+		}
+
 		handler := srv.RequestHandlers[req.Type]
 		if handler == nil {
 			handler = srv.RequestHandlers["default"]

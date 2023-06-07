@@ -288,7 +288,6 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 	for {
 		select {
 		case <-keepAliveTicker.C:
-
 			if lastReceived.Add(3 * sess.keepAliveInterval).Before(time.Now()) {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
@@ -300,18 +299,17 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			}
 
 			log.Println("Send keep-alive request to the client")
-			keepAliveReply, err := sess.SendRequest(keepAliveRequestType, true, nil)
-			log.Println(keepAliveReply, err)
+			// reply can be either false or true, but it always means that the client is alive
+			_, err := sess.SendRequest(keepAliveRequestType, true, nil)
+			if err != nil {
+				log.Printf("sending keep-alive request failed: %v", err)
+			} else {
+				lastReceived = time.Now()
+				keepAliveTicker.Reset(sess.keepAliveInterval)
+			}
 		case req, ok := <-reqs:
 			if !ok {
 				return
-			}
-
-			log.Println(req.Type, req.WantReply, string(req.Payload))
-
-			if keepAliveEnabled {
-				lastReceived = time.Now()
-				keepAliveTicker.Reset(sess.keepAliveInterval)
 			}
 
 			switch req.Type {
@@ -453,7 +451,9 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 				SetAgentRequested(sess.ctx)
 				req.Reply(true, nil)
 			case keepAliveRequestType:
-				req.Reply(true, nil)
+				if req.WantReply {
+					req.Reply(true, nil)
+				}
 			case "break":
 				ok := false
 				sess.Lock()
