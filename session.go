@@ -301,9 +301,9 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			if lastReceived.Add(time.Duration(sess.keepAliveCountMax) * sess.keepAliveInterval).Before(time.Now()) {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
-				err := sess.Close()
+				err := sess.Exit(0)
 				if err != nil {
-					log.Printf("Closing session failed: %v", err)
+					log.Printf("Session exit failed: %v", err)
 				}
 				return
 			}
@@ -315,7 +315,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 				log.Printf("Sending keep-alive request failed: %v", err)
 			} else {
 				log.Println("Client replied to keep-alive request.")
-				keepAliveCallback()
+				ctx.KeepAliveCallback()()
 			}
 		case req, ok := <-reqs:
 			if !ok {
