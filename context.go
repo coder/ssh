@@ -159,5 +159,8 @@ func (ctx *sshContext) Permissions() *Permissions {
 }
 
 func (ctx *sshContext) KeepAliveCallback() func() {
+	if ctx.Value(ContextKeyKeepAliveCallback) == nil {
+		return nil
+	}
 	return ctx.Value(ContextKeyKeepAliveCallback).(func())
 }

@@ -493,6 +493,8 @@ func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok b
 		return false, nil
 	}
 
-	ctx.KeepAliveCallback()()
+	if ctx.KeepAliveCallback() != nil {
+		ctx.KeepAliveCallback()()
+	}
 	return true, nil
 }
