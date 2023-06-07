@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -22,7 +21,9 @@ var DefaultSubsystemHandlers = map[string]SubsystemHandler{}
 
 type RequestHandler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 
-var DefaultRequestHandlers = map[string]RequestHandler{}
+var DefaultRequestHandlers = map[string]RequestHandler{
+	keepAliveRequestType: KeepAliveRequestHandler,
+}
 
 type ChannelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
 
@@ -312,10 +313,6 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 
 func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 	for req := range in {
-		if req.Type == "keepalive@openssh.com" {
-			log.Println("handleRequests", ctx.SessionID(), req)
-		}
-
 		handler := srv.RequestHandlers[req.Type]
 		if handler == nil {
 			handler = srv.RequestHandlers["default"]

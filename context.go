@@ -55,6 +55,8 @@ var (
 	// ContextKeyPublicKey is a context key for use with Contexts in this package.
 	// The associated value will be of type PublicKey.
 	ContextKeyPublicKey = &contextKey{"public-key"}
+
+	ContextKeyKeepAliveCallback = &contextKey{"keep-alive-callback"}
 )
 
 // Context is a package specific context interface. It exposes connection
@@ -86,6 +88,8 @@ type Context interface {
 
 	// Permissions returns the Permissions object used for this connection.
 	Permissions() *Permissions
+
+	KeepAliveCallback() func()
 
 	// SetValue allows you to easily write new values into the underlying context.
 	SetValue(key, value interface{})
@@ -152,4 +156,8 @@ func (ctx *sshContext) LocalAddr() net.Addr {
 
 func (ctx *sshContext) Permissions() *Permissions {
 	return ctx.Value(ContextKeyPermissions).(*Permissions)
+}
+
+func (ctx *sshContext) KeepAliveCallback() func() {
+	return ctx.Value(ContextKeyKeepAliveCallback).(func())
 }

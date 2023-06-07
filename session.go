@@ -124,7 +124,7 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 
 		keepAliveInterval: srv.ClientAliveInterval,
 	}
-	sess.handleRequests(reqs)
+	sess.handleRequests(ctx, reqs)
 }
 
 type session struct {
@@ -270,20 +270,28 @@ func (sess *session) Break(c chan<- bool) {
 	sess.breakCh = c
 }
 
-func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
+func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	keepAliveEnabled := sess.keepAliveInterval > 0
+	lastReceived := time.Now()
+
+	var keepAliveCallback func()
 
 	var keepAliveTicker *time.Ticker
 	if keepAliveEnabled {
 		keepAliveTicker = time.NewTicker(sess.keepAliveInterval)
 		defer keepAliveTicker.Stop()
+
+		keepAliveCallback = func() {
+			lastReceived = time.Now()
+			keepAliveTicker.Reset(sess.keepAliveInterval)
+		}
+
+		ctx.SetValue(ContextKeyKeepAliveCallback, keepAliveCallback)
 	} else {
 		// Configure a stopped ticker to prevent `<-keepAliveTicker.C` from panicking.
 		keepAliveTicker = time.NewTicker(math.MaxInt64)
 		keepAliveTicker.Stop()
 	}
-
-	lastReceived := time.Now()
 
 	for {
 		select {
@@ -293,7 +301,7 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 
 				err := sess.Close()
 				if err != nil {
-					log.Printf("closing session failed: %v", err)
+					log.Printf("Closing session failed: %v", err)
 				}
 				return
 			}
@@ -302,10 +310,10 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			// reply can be either false or true, but it always means that the client is alive
 			_, err := sess.SendRequest(keepAliveRequestType, true, nil)
 			if err != nil {
-				log.Printf("sending keep-alive request failed: %v", err)
+				log.Printf("Sending keep-alive request failed: %v", err)
 			} else {
-				lastReceived = time.Now()
-				keepAliveTicker.Reset(sess.keepAliveInterval)
+				log.Println("Client replied to keep-alive request.")
+				keepAliveCallback()
 			}
 		case req, ok := <-reqs:
 			if !ok {
@@ -470,4 +478,21 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 		}
 
 	}
+}
+
+func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
+	log.Printf("Handle keep-alive request: %s (wantReply: %t)", req.Type, req.WantReply)
+
+	if !req.WantReply {
+		return true, nil
+	}
+
+	err := req.Reply(true, nil)
+	if err != nil {
+		log.Printf("Replying to client keep-alive request failed: %v", err)
+		return false, nil
+	}
+
+	ctx.KeepAliveCallback()()
+	return true, nil
 }
