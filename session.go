@@ -123,6 +123,7 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 		ctx:               ctx,
 
 		keepAliveInterval: srv.ClientAliveInterval,
+		keepAliveCountMax: srv.ClientAliveCountMax,
 	}
 	sess.handleRequests(ctx, reqs)
 }
@@ -151,6 +152,7 @@ type session struct {
 	disablePtyEmulation bool
 
 	keepAliveInterval time.Duration
+	keepAliveCountMax int
 }
 
 func (sess *session) DisablePTYEmulation() {
@@ -296,7 +298,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	for {
 		select {
 		case <-keepAliveTicker.C:
-			if lastReceived.Add(3 * sess.keepAliveInterval).Before(time.Now()) {
+			if lastReceived.Add(time.Duration(sess.keepAliveCountMax) * sess.keepAliveInterval).Before(time.Now()) {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
 				err := sess.Close()

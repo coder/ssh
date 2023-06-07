@@ -71,6 +71,7 @@ type Server struct {
 	SubsystemHandlers map[string]SubsystemHandler
 
 	ClientAliveInterval time.Duration
+	ClientAliveCountMax int
 
 	listenerWg sync.WaitGroup
 	mu         sync.RWMutex
@@ -226,6 +227,10 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 //
 // Serve always returns a non-nil error.
 func (srv *Server) Serve(l net.Listener) error {
+	if (srv.ClientAliveInterval != 0 && srv.ClientAliveCountMax == 0) || (srv.ClientAliveInterval == 0 && srv.ClientAliveCountMax != 0) {
+		return fmt.Errorf("ClientAliveInterval and ClientAliveCountMax must be set together")
+	}
+
 	srv.ensureHandlers()
 	defer l.Close()
 	if err := srv.ensureHostSigner(); err != nil {
