@@ -482,18 +482,19 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	}
 }
 
+// KeepAliveRequestHandler replies to periodic client keep-alive requests:
+// client: send packet: type 80 (SSH_MSG_GLOBAL_REQUEST)
+// client: receive packet: type 81 (SSH_MSG_REQUEST_SUCCESS)
+//
+// It differs from OpenSSH client replies to keep-alive requests:
+// client: receive packet: type 98 (SSH_MSG_CHANNEL_REQUEST)
+// client: client_input_channel_req: channel 0 rtype keepalive@openssh.com reply 1
+// client: send packet: type 100 (SSH_MSG_CHANNEL_FAILURE)
+//
+// Apparently, OpenSSH client always replies with 100, but it does not matter
+// as the server considers it as alive (only the response status is ignored).
 func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
 	log.Printf("Handle keep-alive request: %s (wantReply: %t)", req.Type, req.WantReply)
-
-	if !req.WantReply {
-		return true, nil
-	}
-
-	err := req.Reply(true, nil)
-	if err != nil {
-		log.Printf("Replying to client keep-alive request failed: %v", err)
-		return false, nil
-	}
 
 	if ctx.KeepAliveCallback() != nil {
 		ctx.KeepAliveCallback()()
