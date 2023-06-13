@@ -297,6 +297,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 		ctx.SetValue(ContextKeyKeepAliveCallback, keepAliveCallback)
 	}
 
+	var keepAliveRequestInProgress sync.Mutex
 	for {
 		select {
 		case <-keepAliveCh:
@@ -310,15 +311,24 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 				return
 			}
 
-			log.Println("Send keep-alive request to the client")
-			// reply can be either false or true, but it always means that the client is alive
-			_, err := sess.SendRequest(keepAliveRequestType, true, nil)
-			if err != nil {
-				log.Printf("Sending keep-alive request failed: %v", err)
-			} else {
-				log.Println("Client replied to keep-alive request.")
-				ctx.KeepAliveCallback()()
+			done := keepAliveRequestInProgress.TryLock()
+			if !done {
+				continue
 			}
+
+			go func() {
+				defer keepAliveRequestInProgress.Unlock()
+
+				log.Println("Send keep-alive request to the client")
+				// reply can be either false or true, but it always means that the client is alive
+				_, err := sess.SendRequest(keepAliveRequestType, true, nil)
+				if err != nil {
+					log.Printf("Sending keep-alive request failed: %v", err)
+				} else {
+					log.Println("Client replied to keep-alive request.")
+					ctx.KeepAliveCallback()()
+				}
+			}()
 		case req, ok := <-reqs:
 			if !ok {
 				return
