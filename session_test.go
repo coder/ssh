@@ -6,7 +6,9 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -477,4 +479,79 @@ func TestBreakWithoutChanRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil but got %v", err)
 	}
+}
+
+func TestSessionKeepAlive(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Server replies to keep-alive request", func(t *testing.T) {
+		t.Parallel()
+
+		doneCh := make(chan struct{})
+		defer close(doneCh)
+		session, client, cleanup := newTestSession(t, &Server{
+			ClientAliveInterval: 10 * time.Millisecond,
+			ClientAliveCountMax: 2,
+			Handler: func(s Session) {
+				<-doneCh
+			},
+		}, nil)
+		defer cleanup()
+
+		errChan := make(chan error, 5)
+		go func() {
+			errChan <- session.Run("")
+		}()
+
+		for i := 0; i < 100; i++ {
+			ok, reply, err := client.SendRequest(keepAliveRequestType, true, nil)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Empty(t, reply)
+
+			time.Sleep(5 * time.Millisecond)
+		}
+		doneCh <- struct{}{}
+
+		err := <-errChan
+		if err != nil {
+			t.Fatalf("expected nil but got %v", err)
+		}
+	})
+
+	t.Run("Server requests keep-alive reply", func(t *testing.T) {
+		t.Parallel()
+
+		doneCh := make(chan struct{})
+		defer close(doneCh)
+		session, _, cleanup := newTestSession(t, &Server{
+			ClientAliveInterval: 1 * time.Millisecond,
+			ClientAliveCountMax: 10,
+			Handler: func(s Session) {
+				<-doneCh
+			},
+		}, nil)
+		defer cleanup()
+
+		errChan := make(chan error, 5)
+		go func() {
+			errChan <- session.Run("")
+		}()
+
+		// Just relax and do nothing, Go SSH client should handle replies.
+		//
+		// see: https://github.com/golang/crypto/blob/8e447d8cc585b0089d1938b8747264783295e65f/ssh/client.go#L59
+		time.Sleep(1 * time.Second)
+		doneCh <- struct{}{}
+
+		err := <-errChan
+		if err != nil {
+			t.Fatalf("expected nil but got %v", err)
+		}
+	})
+
+	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("Go SSH client doesn't support disabling replies to keep-alive requests. We can't test it easily without mocking logic.")
+	})
 }
