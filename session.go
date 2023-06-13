@@ -279,12 +279,18 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	var keepAliveCallback func()
 
 	var keepAliveTicker *time.Ticker
+	var m sync.Mutex
+
 	if keepAliveEnabled {
 		keepAliveTicker = time.NewTicker(sess.keepAliveInterval)
 		defer keepAliveTicker.Stop()
 
 		keepAliveCallback = func() {
 			lastReceived = time.Now()
+
+			// KeepAliveCallback can be called via the handler's context anytime.
+			m.Lock()
+			defer m.Unlock()
 			keepAliveTicker.Reset(sess.keepAliveInterval)
 		}
 
