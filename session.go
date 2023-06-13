@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"sync"
 	"time"
@@ -276,14 +275,15 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	keepAliveEnabled := sess.keepAliveInterval > 0
 	lastReceived := time.Now()
 
+	var keepAliveCh <-chan time.Time
 	var keepAliveCallback func()
-
 	var keepAliveTicker *time.Ticker
 	var m sync.Mutex
 
 	if keepAliveEnabled {
 		keepAliveTicker = time.NewTicker(sess.keepAliveInterval)
 		defer keepAliveTicker.Stop()
+		keepAliveCh = keepAliveTicker.C
 
 		keepAliveCallback = func() {
 			lastReceived = time.Now()
@@ -295,15 +295,11 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 		}
 
 		ctx.SetValue(ContextKeyKeepAliveCallback, keepAliveCallback)
-	} else {
-		// Configure a stopped ticker to prevent `<-keepAliveTicker.C` from panicking.
-		keepAliveTicker = time.NewTicker(math.MaxInt64)
-		keepAliveTicker.Stop()
 	}
 
 	for {
 		select {
-		case <-keepAliveTicker.C:
+		case <-keepAliveCh:
 			if lastReceived.Add(time.Duration(sess.keepAliveCountMax) * sess.keepAliveInterval).Before(time.Now()) {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
