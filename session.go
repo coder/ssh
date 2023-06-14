@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anmitsu/go-shlex"
@@ -155,8 +156,8 @@ type session struct {
 	keepAliveCountMax int
 
 	// Metrics
-	serverRequestedKeepAlive int
-	keepAliveReplyReceived   int
+	serverRequestedKeepAlive atomic.Int64
+	keepAliveReplyReceived   atomic.Int64
 }
 
 func (sess *session) DisablePTYEmulation() {
@@ -278,7 +279,11 @@ func (sess *session) Break(c chan<- bool) {
 
 func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 	keepAliveEnabled := sess.keepAliveInterval > 0
+
+	var lastReceivedM sync.Mutex
+	lastReceivedM.Lock()
 	lastReceived := time.Now()
+	lastReceivedM.Unlock()
 
 	var keepAliveCh <-chan time.Time
 	var keepAliveCallback func()
@@ -290,24 +295,32 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 		defer keepAliveTicker.Stop()
 		keepAliveCh = keepAliveTicker.C
 
-		keepAliveCallback = func() {
-			lastReceived = time.Now()
+		if ctx.Value(ContextKeyKeepAliveCallback) == nil {
+			keepAliveCallback = func() {
+				lastReceivedM.Lock()
+				lastReceived = time.Now()
+				lastReceivedM.Unlock()
 
-			// KeepAliveCallback can be called via the handler's context anytime.
-			m.Lock()
-			defer m.Unlock()
-			sess.keepAliveReplyReceived++
-			keepAliveTicker.Reset(sess.keepAliveInterval)
+				// KeepAliveCallback can be called via the handler's context anytime.
+				sess.keepAliveReplyReceived.Add(1)
+
+				m.Lock()
+				defer m.Unlock()
+				keepAliveTicker.Reset(sess.keepAliveInterval)
+			}
+			ctx.SetValue(ContextKeyKeepAliveCallback, keepAliveCallback)
 		}
-
-		ctx.SetValue(ContextKeyKeepAliveCallback, keepAliveCallback)
 	}
 
 	var keepAliveRequestInProgress sync.Mutex
 	for {
 		select {
 		case <-keepAliveCh:
-			if lastReceived.Add(time.Duration(sess.keepAliveCountMax) * sess.keepAliveInterval).Before(time.Now()) {
+			lastReceivedM.Lock()
+			last := lastReceived
+			lastReceivedM.Unlock()
+
+			if last.Add(time.Duration(sess.keepAliveCountMax) * sess.keepAliveInterval).Before(time.Now()) {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
 				err := sess.Exit(0)
@@ -325,15 +338,13 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			go func() {
 				defer keepAliveRequestInProgress.Unlock()
 
-				log.Println("Send keep-alive request to the client")
-				sess.serverRequestedKeepAlive++
+				sess.serverRequestedKeepAlive.Add(1)
 
 				// reply can be either false or true, but it always means that the client is alive
 				_, err := sess.SendRequest(keepAliveRequestType, true, nil)
 				if err != nil && err != io.EOF {
 					log.Printf("Sending keep-alive request failed: %v", err)
 				} else if err == nil {
-					log.Printf("Client replied to keep-alive request")
 					ctx.KeepAliveCallback()()
 				}
 			}()
@@ -514,10 +525,9 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 // Apparently, OpenSSH client always replies with 100, but it does not matter
 // as the server considers it as alive (only the response status is ignored).
 func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
-	log.Printf("Handle keep-alive request: %s (wantReply: %t)", req.Type, req.WantReply)
 	srv.keepAliveRequestHandlerCalled.Add(1)
 
-	if ctx.KeepAliveCallback() != nil {
+	if ctx.Value(ContextKeyKeepAliveCallback) != nil {
 		ctx.KeepAliveCallback()()
 	}
 	return true, nil
