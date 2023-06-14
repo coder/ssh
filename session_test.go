@@ -40,10 +40,6 @@ func newLocalListener() net.Listener {
 }
 
 func newClientSession(t *testing.T, addr string, config *gossh.ClientConfig) (*gossh.Session, *gossh.Client, func()) {
-	return newClientSessionWithDial(t, addr, config, gossh.Dial)
-}
-
-func newClientSessionWithDial(t *testing.T, addr string, config *gossh.ClientConfig, dial func(network string, addr string, cfg *gossh.ClientConfig) (*gossh.Client, error)) (*gossh.Session, *gossh.Client, func()) {
 	if config == nil {
 		config = &gossh.ClientConfig{
 			User: "testuser",
@@ -55,7 +51,7 @@ func newClientSessionWithDial(t *testing.T, addr string, config *gossh.ClientCon
 	if config.HostKeyCallback == nil {
 		config.HostKeyCallback = gossh.InsecureIgnoreHostKey()
 	}
-	client, err := dial("tcp", addr, config)
+	client, err := gossh.Dial("tcp", addr, config)
 	if err != nil {
 		t.Fatal(err)
 	}
