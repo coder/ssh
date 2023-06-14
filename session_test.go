@@ -40,6 +40,10 @@ func newLocalListener() net.Listener {
 }
 
 func newClientSession(t *testing.T, addr string, config *gossh.ClientConfig) (*gossh.Session, *gossh.Client, func()) {
+	return newClientSessionWithDial(t, addr, config, gossh.Dial)
+}
+
+func newClientSessionWithDial(t *testing.T, addr string, config *gossh.ClientConfig, dial func(network string, addr string, cfg *gossh.ClientConfig) (*gossh.Client, error)) (*gossh.Session, *gossh.Client, func()) {
 	if config == nil {
 		config = &gossh.ClientConfig{
 			User: "testuser",
@@ -51,7 +55,7 @@ func newClientSession(t *testing.T, addr string, config *gossh.ClientConfig) (*g
 	if config.HostKeyCallback == nil {
 		config.HostKeyCallback = gossh.InsecureIgnoreHostKey()
 	}
-	client, err := gossh.Dial("tcp", addr, config)
+	client, err := dial("tcp", addr, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,13 +493,20 @@ func TestSessionKeepAlive(t *testing.T) {
 
 		doneCh := make(chan struct{})
 		defer close(doneCh)
-		session, client, cleanup := newTestSession(t, &Server{
+
+		var sshSession *session
+		srv := &Server{
 			ClientAliveInterval: 10 * time.Millisecond,
 			ClientAliveCountMax: 2,
 			Handler: func(s Session) {
 				<-doneCh
 			},
-		}, nil)
+			SessionRequestCallback: func(sess Session, requestType string) bool {
+				sshSession = sess.(*session)
+				return true
+			},
+		}
+		session, client, cleanup := newTestSession(t, srv, nil)
 		defer cleanup()
 
 		errChan := make(chan error, 5)
@@ -506,7 +517,7 @@ func TestSessionKeepAlive(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			ok, reply, err := client.SendRequest(keepAliveRequestType, true, nil)
 			require.NoError(t, err)
-			require.True(t, ok)
+			require.True(t, ok) // server replied
 			require.Empty(t, reply)
 
 			time.Sleep(5 * time.Millisecond)
@@ -517,6 +528,11 @@ func TestSessionKeepAlive(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected nil but got %v", err)
 		}
+
+		// Verify that...
+		require.Equal(t, int64(100), srv.keepAliveRequestHandlerCalled.Load()) // client sent keep-alive requests,
+		require.Equal(t, 100, sshSession.keepAliveReplyReceived)               // and server replied to all of them,
+		require.Zero(t, sshSession.serverRequestedKeepAlive)                   // and server didn't send any extra requests.
 	})
 
 	t.Run("Server requests keep-alive reply", func(t *testing.T) {
@@ -524,13 +540,20 @@ func TestSessionKeepAlive(t *testing.T) {
 
 		doneCh := make(chan struct{})
 		defer close(doneCh)
-		session, _, cleanup := newTestSession(t, &Server{
-			ClientAliveInterval: 1 * time.Millisecond,
-			ClientAliveCountMax: 10,
+
+		var sshSession *session
+		srv := &Server{
+			ClientAliveInterval: 10 * time.Millisecond,
+			ClientAliveCountMax: 2,
 			Handler: func(s Session) {
 				<-doneCh
 			},
-		}, nil)
+			SessionRequestCallback: func(sess Session, requestType string) bool {
+				sshSession = sess.(*session)
+				return true
+			},
+		}
+		session, _, cleanup := newTestSession(t, srv, nil)
 		defer cleanup()
 
 		errChan := make(chan error, 5)
@@ -538,16 +561,20 @@ func TestSessionKeepAlive(t *testing.T) {
 			errChan <- session.Run("")
 		}()
 
-		// Just relax and do nothing, Go SSH client should handle replies.
-		//
-		// see: https://github.com/golang/crypto/blob/8e447d8cc585b0089d1938b8747264783295e65f/ssh/client.go#L59
-		time.Sleep(1 * time.Second)
-		doneCh <- struct{}{}
+		// Wait for client to reply to 100 keep-alive requests.
+		require.Eventually(t, func() bool {
+			return sshSession.keepAliveReplyReceived == 100
+		}, time.Second*2, time.Millisecond)
 
+		doneCh <- struct{}{}
 		err := <-errChan
 		if err != nil {
 			t.Fatalf("expected nil but got %v", err)
 		}
+
+		// Verify that...
+		require.Zero(t, srv.keepAliveRequestHandlerCalled.Load())  // client didn't send any keep-alive requests,
+		require.Equal(t, 100, sshSession.serverRequestedKeepAlive) //  server requested keep-alive replies
 	})
 
 	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -152,6 +153,10 @@ type session struct {
 
 	keepAliveInterval time.Duration
 	keepAliveCountMax int
+
+	// Metrics
+	serverRequestedKeepAlive int
+	keepAliveReplyReceived   int
 }
 
 func (sess *session) DisablePTYEmulation() {
@@ -291,6 +296,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			// KeepAliveCallback can be called via the handler's context anytime.
 			m.Lock()
 			defer m.Unlock()
+			sess.keepAliveReplyReceived++
 			keepAliveTicker.Reset(sess.keepAliveInterval)
 		}
 
@@ -320,12 +326,14 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 				defer keepAliveRequestInProgress.Unlock()
 
 				log.Println("Send keep-alive request to the client")
+				sess.serverRequestedKeepAlive++
+
 				// reply can be either false or true, but it always means that the client is alive
 				_, err := sess.SendRequest(keepAliveRequestType, true, nil)
-				if err != nil {
+				if err != nil && err != io.EOF {
 					log.Printf("Sending keep-alive request failed: %v", err)
-				} else {
-					log.Println("Client replied to keep-alive request.")
+				} else if err == nil {
+					log.Printf("Client replied to keep-alive request")
 					ctx.KeepAliveCallback()()
 				}
 			}()
@@ -507,6 +515,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 // as the server considers it as alive (only the response status is ignored).
 func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
 	log.Printf("Handle keep-alive request: %s (wantReply: %t)", req.Type, req.WantReply)
+	srv.keepAliveRequestHandlerCalled.Add(1)
 
 	if ctx.KeepAliveCallback() != nil {
 		ctx.KeepAliveCallback()()

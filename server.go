@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -79,6 +80,9 @@ type Server struct {
 	conns      map[*gossh.ServerConn]struct{}
 	connWg     sync.WaitGroup
 	doneChan   chan struct{}
+
+	// Metrics
+	keepAliveRequestHandlerCalled atomic.Int64
 }
 
 func (srv *Server) ensureHostSigner() error {
