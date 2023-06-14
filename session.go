@@ -527,8 +527,9 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
 	srv.keepAliveRequestHandlerCalled.Add(1)
 
-	if ctx.Value(ContextKeyKeepAliveCallback) != nil {
-		ctx.KeepAliveCallback()()
+	cb := ctx.KeepAliveCallback()
+	if cb != nil {
+		cb()
 	}
 	return true, nil
 }
