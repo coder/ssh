@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"log"
 	"sync"
 	"time"
 )
@@ -47,8 +46,6 @@ func (ska *SessionKeepAlive) RequestHandlerCallback() {
 	ska.m.Lock()
 	ska.metrics.requestHandlerCalled++
 	ska.m.Unlock()
-
-	log.Println("ska.RequestHandlerCallback()")
 
 	ska.Reset()
 }

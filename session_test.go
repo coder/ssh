@@ -507,7 +507,7 @@ func TestSessionKeepAlive(t *testing.T) {
 		session, client, cleanup := newTestSession(t, srv, nil)
 		defer cleanup()
 
-		errChan := make(chan error, 5)
+		errChan := make(chan error, 1)
 		go func() {
 			errChan <- session.Run("")
 		}()
@@ -515,7 +515,7 @@ func TestSessionKeepAlive(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			ok, reply, err := client.SendRequest(keepAliveRequestType, true, nil)
 			require.NoError(t, err)
-			require.True(t, ok) // server replied
+			require.False(t, ok) // server replied
 			require.Empty(t, reply)
 
 			time.Sleep(10 * time.Millisecond)
@@ -558,7 +558,7 @@ func TestSessionKeepAlive(t *testing.T) {
 		session, _, cleanup := newTestSession(t, srv, nil)
 		defer cleanup()
 
-		errChan := make(chan error, 5)
+		errChan := make(chan error, 1)
 		go func() {
 			errChan <- session.Run("")
 		}()
