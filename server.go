@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -80,9 +79,6 @@ type Server struct {
 	conns      map[*gossh.ServerConn]struct{}
 	connWg     sync.WaitGroup
 	doneChan   chan struct{}
-
-	// Metrics
-	keepAliveRequestHandlerCalled atomic.Int64
 }
 
 func (srv *Server) ensureHostSigner() error {
@@ -305,6 +301,8 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 
 	ctx.SetValue(ContextKeyConn, sshConn)
 	applyConnMetadata(ctx, sshConn)
+	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
+	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
 	//go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
