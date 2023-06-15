@@ -13,16 +13,10 @@ type SessionKeepAlive struct {
 	tickerCh     <-chan time.Time
 	lastReceived time.Time
 
-	metrics keepAliveMetrics
+	metrics KeepAliveMetrics
 
 	m      sync.Mutex
 	closed bool
-}
-
-type KeepAliveMetrics interface {
-	RequestHandlerCalled() int
-	KeepAliveReplyReceived() int
-	ServerRequestedKeepAlive() int
 }
 
 func NewSessionKeepAlive(clientAliveInterval time.Duration, clientAliveCountMax int) *SessionKeepAlive {
@@ -44,7 +38,7 @@ func NewSessionKeepAlive(clientAliveInterval time.Duration, clientAliveCountMax 
 
 func (ska *SessionKeepAlive) RequestHandlerCallback() {
 	ska.m.Lock()
-	ska.metrics.requestHandlerCalled++
+	ska.metrics.RequestHandlerCalled++
 	ska.m.Unlock()
 
 	ska.Reset()
@@ -54,14 +48,14 @@ func (ska *SessionKeepAlive) ServerRequestedKeepAliveCallback() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	ska.metrics.serverRequestedKeepAlive++
+	ska.metrics.ServerRequestedKeepAlive++
 }
 
 func (ska *SessionKeepAlive) Reset() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	ska.metrics.keepAliveReplyReceived++
+	ska.metrics.KeepAliveReplyReceived++
 
 	if ska.ticker != nil && !ska.closed {
 		ska.lastReceived = time.Now()
@@ -95,24 +89,11 @@ func (ska *SessionKeepAlive) Metrics() KeepAliveMetrics {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	kam := ska.metrics
-	return &kam
+	return ska.metrics
 }
 
-type keepAliveMetrics struct {
-	requestHandlerCalled     int
-	keepAliveReplyReceived   int
-	serverRequestedKeepAlive int
-}
-
-func (kam keepAliveMetrics) RequestHandlerCalled() int {
-	return kam.requestHandlerCalled
-}
-
-func (kam keepAliveMetrics) KeepAliveReplyReceived() int {
-	return kam.keepAliveReplyReceived
-}
-
-func (kam keepAliveMetrics) ServerRequestedKeepAlive() int {
-	return kam.serverRequestedKeepAlive
+type KeepAliveMetrics struct {
+	RequestHandlerCalled     int
+	KeepAliveReplyReceived   int
+	ServerRequestedKeepAlive int
 }

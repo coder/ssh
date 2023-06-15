@@ -528,9 +528,9 @@ func TestSessionKeepAlive(t *testing.T) {
 		}
 
 		// Verify that...
-		require.Equal(t, 100, sshSession.ctx.KeepAlive().Metrics().RequestHandlerCalled())   // client sent keep-alive requests,
-		require.Equal(t, 100, sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived()) // and server replied to all of them,
-		require.Zero(t, sshSession.ctx.KeepAlive().Metrics().ServerRequestedKeepAlive())     // and server didn't send any extra requests.
+		require.Equal(t, 100, sshSession.ctx.KeepAlive().Metrics().RequestHandlerCalled)   // client sent keep-alive requests,
+		require.Equal(t, 100, sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived) // and server replied to all of them,
+		require.Zero(t, sshSession.ctx.KeepAlive().Metrics().ServerRequestedKeepAlive)     // and server didn't send any extra requests.
 	})
 
 	t.Run("Server requests keep-alive reply", func(t *testing.T) {
@@ -568,9 +568,9 @@ func TestSessionKeepAlive(t *testing.T) {
 			m.Lock()
 			defer m.Unlock()
 
-			return sshSession != nil && sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived() >= 10
+			return sshSession != nil && sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived >= 10
 		}, time.Second*3, time.Millisecond)
-		require.GreaterOrEqual(t, 10, sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived())
+		require.GreaterOrEqual(t, 10, sshSession.ctx.KeepAlive().Metrics().KeepAliveReplyReceived)
 
 		doneCh <- struct{}{}
 		err := <-errChan
@@ -579,8 +579,8 @@ func TestSessionKeepAlive(t *testing.T) {
 		}
 
 		// Verify that...
-		require.Zero(t, sshSession.ctx.KeepAlive().Metrics().RequestHandlerCalled())                   // client didn't send any keep-alive requests,
-		require.GreaterOrEqual(t, 10, sshSession.ctx.KeepAlive().Metrics().ServerRequestedKeepAlive()) //  server requested keep-alive replies
+		require.Zero(t, sshSession.ctx.KeepAlive().Metrics().RequestHandlerCalled)                   // client didn't send any keep-alive requests,
+		require.GreaterOrEqual(t, 10, sshSession.ctx.KeepAlive().Metrics().ServerRequestedKeepAlive) //  server requested keep-alive replies
 	})
 
 	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {
