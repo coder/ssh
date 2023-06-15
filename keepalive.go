@@ -57,16 +57,12 @@ func (ska *SessionKeepAlive) ServerRequestedKeepAliveCallback() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	// log.Println("ska.ServerRequestedKeepAliveCallback()")
-
 	ska.metrics.serverRequestedKeepAlive++
 }
 
 func (ska *SessionKeepAlive) Reset() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
-
-	// log.Println("ska.Reset()")
 
 	ska.metrics.keepAliveReplyReceived++
 
@@ -92,9 +88,9 @@ func (ska *SessionKeepAlive) Close() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	// log.Println("ska.Close()")
-
-	ska.ticker.Stop()
+	if ska.ticker != nil {
+		ska.ticker.Stop()
+	}
 	ska.closed = true
 }
 
