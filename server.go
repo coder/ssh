@@ -21,7 +21,9 @@ var DefaultSubsystemHandlers = map[string]SubsystemHandler{}
 
 type RequestHandler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 
-var DefaultRequestHandlers = map[string]RequestHandler{}
+var DefaultRequestHandlers = map[string]RequestHandler{
+	keepAliveRequestType: KeepAliveRequestHandler,
+}
 
 type ChannelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
 
@@ -67,6 +69,9 @@ type Server struct {
 	// SubsystemHandlers are handlers which are similar to the usual SSH command
 	// handlers, but handle named subsystems.
 	SubsystemHandlers map[string]SubsystemHandler
+
+	ClientAliveInterval time.Duration
+	ClientAliveCountMax int
 
 	listenerWg sync.WaitGroup
 	mu         sync.RWMutex
@@ -222,6 +227,10 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 //
 // Serve always returns a non-nil error.
 func (srv *Server) Serve(l net.Listener) error {
+	if (srv.ClientAliveInterval != 0 && srv.ClientAliveCountMax == 0) || (srv.ClientAliveInterval == 0 && srv.ClientAliveCountMax != 0) {
+		return fmt.Errorf("ClientAliveInterval and ClientAliveCountMax must be set together")
+	}
+
 	srv.ensureHandlers()
 	defer l.Close()
 	if err := srv.ensureHostSigner(); err != nil {
@@ -292,6 +301,8 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 
 	ctx.SetValue(ContextKeyConn, sshConn)
 	applyConnMetadata(ctx, sshConn)
+	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
+	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
 	//go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
