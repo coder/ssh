@@ -476,6 +476,9 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 // client: send packet: type 80 (SSH_MSG_GLOBAL_REQUEST)
 // client: receive packet: type 82 (SSH_MSG_REQUEST_SUCCESS)
 func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
-	ctx.KeepAlive().RequestHandlerCallback()
+	keepAlive := ctx.KeepAlive()
+	if keepAlive != nil {
+		ctx.KeepAlive().RequestHandlerCallback()
+	}
 	return false, nil
 }
