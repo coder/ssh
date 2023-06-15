@@ -276,10 +276,11 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			if keepAlive.TimeIsUp() {
 				log.Println("Keep-alive reply not received. Close down the session.")
 
-				err := sess.Exit(0)
+				err := sess.Exit(255)
 				if err != nil {
 					log.Printf("Session exit failed: %v", err)
 				}
+				_ = sess.Close()
 				return
 			}
 
