@@ -51,7 +51,10 @@ type Server struct {
 	ServerConfigCallback          ServerConfigCallback          // callback for configuring detailed SSH options
 	SessionRequestCallback        SessionRequestCallback        // callback for allowing or denying SSH sessions
 
-	ConnectionFailedCallback ConnectionFailedCallback // callback to report connection failures
+	// server calls Failed callback for connections that fail initial handshake, and Complete callback for those that
+	// succeed, never both.
+	ConnectionFailedCallback   ConnectionFailedCallback   // callback to report connection failures
+	ConnectionCompleteCallback ConnectionCompleteCallback // callback to report connection completion
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -294,6 +297,11 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			srv.ConnectionFailedCallback(conn, err)
 		}
 		return
+	}
+	if srv.ConnectionCompleteCallback != nil {
+		defer func() {
+			srv.ConnectionCompleteCallback(sshConn, sshConn.Wait())
+		}()
 	}
 
 	srv.trackConn(sshConn, true)

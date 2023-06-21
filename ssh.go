@@ -71,6 +71,14 @@ type ServerConfigCallback func(ctx Context) *gossh.ServerConfig
 // Please note: the net.Conn is likely to be closed at this point
 type ConnectionFailedCallback func(conn net.Conn, err error)
 
+// ConnectionCompleteCallback is a hook for reporting connections that
+// complete.  The included error is from the underlying SSH transport
+// protocol mux (golang.org/x/crypto/ssh), and is non-nil, even for
+// normal termination.
+//
+// Please note: the ServerConn is closed at this point
+type ConnectionCompleteCallback func(conn *gossh.ServerConn, err error)
+
 // Window represents the size of a PTY window.
 //
 // See https://datatracker.ietf.org/doc/html/rfc4254#section-6.2
