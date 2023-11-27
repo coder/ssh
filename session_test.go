@@ -390,6 +390,111 @@ func TestSignals(t *testing.T) {
 	}
 }
 
+func TestSignalsRaceDeregisterAndReregister(t *testing.T) {
+	t.Parallel()
+
+	numSignals := 128
+
+	// errChan lets us get errors back from the session
+	errChan := make(chan error, 5)
+
+	// doneChan lets us specify that we should exit.
+	doneChan := make(chan interface{})
+
+	// Channels to synchronize the handler and the test.
+	handlerPreRegister := make(chan struct{})
+	handlerPostRegister := make(chan struct{})
+	signalInit := make(chan struct{})
+
+	session, _, cleanup := newTestSession(t, &Server{
+		Handler: func(s Session) {
+			// Single buffer slot, this is to make sure we don't miss
+			// signals or send on nil a channel.
+			signals := make(chan Signal, 1)
+
+			<-handlerPreRegister // Wait for initial signal buffering.
+
+			// Register signals.
+			s.Signals(signals)
+			close(handlerPostRegister) // Trigger post register signaling.
+
+			// Process signals so that we can don't see a deadlock.
+			discarded := 0
+			discardDone := make(chan struct{})
+			go func() {
+				defer close(discardDone)
+				for range signals {
+					discarded++
+				}
+			}()
+			// Deregister signals.
+			s.Signals(nil)
+			// Close channel to close goroutine and ensure we don't send
+			// on a closed channel.
+			close(signals)
+			<-discardDone
+
+			signals = make(chan Signal, 1)
+			consumeDone := make(chan struct{})
+			go func() {
+				defer close(consumeDone)
+
+				for i := 0; i < numSignals-discarded; i++ {
+					select {
+					case sig := <-signals:
+						if sig != SIGHUP {
+							errChan <- fmt.Errorf("expected signal %v but got %v", SIGHUP, sig)
+							return
+						}
+					case <-doneChan:
+						errChan <- fmt.Errorf("Unexpected done")
+						return
+					}
+				}
+			}()
+
+			// Re-register signals and make sure we don't miss any.
+			s.Signals(signals)
+			close(signalInit)
+
+			<-consumeDone
+		},
+	}, nil)
+	defer cleanup()
+
+	go func() {
+		// Send 1/4th directly to buffer.
+		for i := 0; i < numSignals/4; i++ {
+			session.Signal(gossh.SIGHUP)
+		}
+		close(handlerPreRegister)
+		<-handlerPostRegister
+		// Send 1/4th to channel or buffer.
+		for i := 0; i < numSignals/4; i++ {
+			session.Signal(gossh.SIGHUP)
+		}
+		// Send final 1/2 to channel.
+		<-signalInit
+		for i := 0; i < numSignals/2; i++ {
+			session.Signal(gossh.SIGHUP)
+		}
+	}()
+
+	go func() {
+		errChan <- session.Run("")
+	}()
+
+	select {
+	case err := <-errChan:
+		close(doneChan)
+		if err != nil {
+			t.Fatalf("expected nil but got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for session to exit")
+	}
+}
+
 func TestBreakWithChanRegistered(t *testing.T) {
 	t.Parallel()
 

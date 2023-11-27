@@ -142,6 +142,7 @@ type session struct {
 	rawCmd              string
 	subsystem           string
 	ctx                 Context
+	sigMu               sync.Mutex
 	sigCh               chan<- Signal
 	sigBuf              []Signal
 	breakCh             chan<- bool
@@ -247,16 +248,19 @@ func (sess *session) X11() (X11, bool) {
 }
 
 func (sess *session) Signals(c chan<- Signal) {
-	sess.Lock()
-	defer sess.Unlock()
+	sess.sigMu.Lock()
 	sess.sigCh = c
-	if len(sess.sigBuf) > 0 {
-		go func() {
-			for _, sig := range sess.sigBuf {
-				sess.sigCh <- sig
-			}
-		}()
+	if len(sess.sigBuf) == 0 || sess.sigCh == nil {
+		sess.sigMu.Unlock()
+		return
 	}
+	go func() {
+		defer sess.sigMu.Unlock()
+		for _, sig := range sess.sigBuf {
+			sess.sigCh <- sig
+		}
+		sess.sigBuf = nil
+	}()
 }
 
 func (sess *session) Break(c chan<- bool) {
@@ -379,7 +383,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			case "signal":
 				var payload struct{ Signal string }
 				gossh.Unmarshal(req.Payload, &payload)
-				sess.Lock()
+				sess.sigMu.Lock()
 				if sess.sigCh != nil {
 					sess.sigCh <- Signal(payload.Signal)
 				} else {
@@ -387,7 +391,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 						sess.sigBuf = append(sess.sigBuf, Signal(payload.Signal))
 					}
 				}
-				sess.Unlock()
+				sess.sigMu.Unlock()
 			case "pty-req":
 				if sess.handled || sess.pty != nil {
 					req.Reply(false, nil)
