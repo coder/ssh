@@ -263,7 +263,9 @@ func (sess *session) Signals(c chan<- Signal) {
 		// and sigBuf. We also guarantee that calling Signals(ch)
 		// followed by Signals(nil) will have depleted the sigBuf when
 		// the second call returns and that there will be no more
-		// signals on ch.
+		// signals on ch. This is done in a goroutine so we can return
+		// early and allow the caller to set up processing for the
+		// channel even after calling Signals(ch).
 		defer sess.sigMu.Unlock()
 		for _, sig := range sess.sigBuf {
 			sess.sigCh <- sig
