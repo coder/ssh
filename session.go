@@ -127,21 +127,25 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 type session struct {
 	sync.Mutex
 	gossh.Channel
-	conn                *gossh.ServerConn
-	handler             Handler
-	subsystemHandlers   map[string]SubsystemHandler
-	handled             bool
-	exited              bool
-	pty                 *Pty
-	x11                 *X11
-	winch               chan Window
-	env                 []string
-	ptyCb               PtyCallback
-	x11Cb               X11Callback
-	sessReqCb           SessionRequestCallback
-	rawCmd              string
-	subsystem           string
-	ctx                 Context
+	conn              *gossh.ServerConn
+	handler           Handler
+	subsystemHandlers map[string]SubsystemHandler
+	handled           bool
+	exited            bool
+	pty               *Pty
+	x11               *X11
+	winch             chan Window
+	env               []string
+	ptyCb             PtyCallback
+	x11Cb             X11Callback
+	sessReqCb         SessionRequestCallback
+	rawCmd            string
+	subsystem         string
+	ctx               Context
+	// sigMu protects sigCh and sigBuf, it is made separate from the
+	// session mutex to reduce the risk of deadlocks while we process
+	// buffered signals.
+	sigMu               sync.Mutex
 	sigCh               chan<- Signal
 	sigBuf              []Signal
 	breakCh             chan<- bool
@@ -247,16 +251,30 @@ func (sess *session) X11() (X11, bool) {
 }
 
 func (sess *session) Signals(c chan<- Signal) {
-	sess.Lock()
-	defer sess.Unlock()
+	sess.sigMu.Lock()
 	sess.sigCh = c
-	if len(sess.sigBuf) > 0 {
-		go func() {
-			for _, sig := range sess.sigBuf {
-				sess.sigCh <- sig
-			}
-		}()
+	if len(sess.sigBuf) == 0 || sess.sigCh == nil {
+		sess.sigMu.Unlock()
+		return
 	}
+	// If we have buffered signals, we need to send them whilst
+	// holding the signal mutex to avoid race conditions on sigCh
+	// and sigBuf. We also guarantee that calling Signals(ch)
+	// followed by Signals(nil) will have depleted the sigBuf when
+	// the second call returns and that there will be no more
+	// signals on ch. This is done in a goroutine so we can return
+	// early and allow the caller to set up processing for the
+	// channel even after calling Signals(ch).
+	go func() {
+		// Here we're relying on the mutex being locked in the outer
+		// Signals() function, so we simply unlock it when we're done.
+		defer sess.sigMu.Unlock()
+
+		for _, sig := range sess.sigBuf {
+			sess.sigCh <- sig
+		}
+		sess.sigBuf = nil
+	}()
 }
 
 func (sess *session) Break(c chan<- bool) {
@@ -379,7 +397,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 			case "signal":
 				var payload struct{ Signal string }
 				gossh.Unmarshal(req.Payload, &payload)
-				sess.Lock()
+				sess.sigMu.Lock()
 				if sess.sigCh != nil {
 					sess.sigCh <- Signal(payload.Signal)
 				} else {
@@ -387,7 +405,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 						sess.sigBuf = append(sess.sigBuf, Signal(payload.Signal))
 					}
 				}
-				sess.Unlock()
+				sess.sigMu.Unlock()
 			case "pty-req":
 				if sess.handled || sess.pty != nil {
 					req.Reply(false, nil)
