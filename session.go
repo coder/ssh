@@ -257,16 +257,19 @@ func (sess *session) Signals(c chan<- Signal) {
 		sess.sigMu.Unlock()
 		return
 	}
+	// If we have buffered signals, we need to send them whilst
+	// holding the signal mutex to avoid race conditions on sigCh
+	// and sigBuf. We also guarantee that calling Signals(ch)
+	// followed by Signals(nil) will have depleted the sigBuf when
+	// the second call returns and that there will be no more
+	// signals on ch. This is done in a goroutine so we can return
+	// early and allow the caller to set up processing for the
+	// channel even after calling Signals(ch).
 	go func() {
-		// If we have buffered signals, we need to send them whilst
-		// holding the signal mutex to avoid race conditions on sigCh
-		// and sigBuf. We also guarantee that calling Signals(ch)
-		// followed by Signals(nil) will have depleted the sigBuf when
-		// the second call returns and that there will be no more
-		// signals on ch. This is done in a goroutine so we can return
-		// early and allow the caller to set up processing for the
-		// channel even after calling Signals(ch).
+		// Here we're relying on the mutex being locked in the outer
+		// Signals() function, so we simply unlock it when we're done.
 		defer sess.sigMu.Unlock()
+
 		for _, sig := range sess.sigBuf {
 			sess.sigCh <- sig
 		}
