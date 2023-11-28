@@ -127,21 +127,24 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 type session struct {
 	sync.Mutex
 	gossh.Channel
-	conn                *gossh.ServerConn
-	handler             Handler
-	subsystemHandlers   map[string]SubsystemHandler
-	handled             bool
-	exited              bool
-	pty                 *Pty
-	x11                 *X11
-	winch               chan Window
-	env                 []string
-	ptyCb               PtyCallback
-	x11Cb               X11Callback
-	sessReqCb           SessionRequestCallback
-	rawCmd              string
-	subsystem           string
-	ctx                 Context
+	conn              *gossh.ServerConn
+	handler           Handler
+	subsystemHandlers map[string]SubsystemHandler
+	handled           bool
+	exited            bool
+	pty               *Pty
+	x11               *X11
+	winch             chan Window
+	env               []string
+	ptyCb             PtyCallback
+	x11Cb             X11Callback
+	sessReqCb         SessionRequestCallback
+	rawCmd            string
+	subsystem         string
+	ctx               Context
+	// sigMu protects sigCh and sigBuf, it is made separate from the
+	// session mutex to reduce the risk of deadlocks while we process
+	// buffered signals.
 	sigMu               sync.Mutex
 	sigCh               chan<- Signal
 	sigBuf              []Signal
@@ -255,6 +258,12 @@ func (sess *session) Signals(c chan<- Signal) {
 		return
 	}
 	go func() {
+		// If we have buffered signals, we need to send them whilst
+		// holding the signal mutex to avoid race conditions on sigCh
+		// and sigBuf. We also guarantee that calling Signals(ch)
+		// followed by Signals(nil) will have depleted the sigBuf when
+		// the second call returns and that there will be no more
+		// signals on ch.
 		defer sess.sigMu.Unlock()
 		for _, sig := range sess.sigBuf {
 			sess.sigCh <- sig
