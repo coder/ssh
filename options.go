@@ -1,4 +1,4 @@
-package ssh
+package ssh_server
 
 import (
 	"io/ioutil"

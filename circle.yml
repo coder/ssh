@@ -3,7 +3,7 @@ jobs:
   build-go-latest:
     docker:
     - image: golang:latest
-    working_directory: /go/src/github.com/gliderlabs/ssh
+    working_directory: /go/src/github.com/GoSeoTaxi/ssh_server
     steps:
     - checkout
     - run: go get
@@ -12,7 +12,7 @@ jobs:
   build-go-1.12:
     docker:
     - image: golang:1.12
-    working_directory: /go/src/github.com/gliderlabs/ssh
+    working_directory: /go/src/github.com/GoSeoTaxi/ssh_server
     steps:
     - checkout
     - run: go get

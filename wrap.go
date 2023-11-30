@@ -1,4 +1,4 @@
-package ssh
+package ssh_server
 
 import gossh "golang.org/x/crypto/ssh"
 

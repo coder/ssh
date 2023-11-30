@@ -1,40 +1,41 @@
-package ssh_test
+package ssh_server_test
 
 import (
 	"io"
 	"io/ioutil"
 
-	"github.com/gliderlabs/ssh"
+	gossh "github.com/GoSeoTaxi/ssh_server"
+	"golang.org/x/crypto/ssh"
 )
 
 func ExampleListenAndServe() {
-	ssh.ListenAndServe(":2222", func(s ssh.Session) {
+	gossh.ListenAndServe(":2222", func(s gossh.Session) {
 		io.WriteString(s, "Hello world\n")
 	})
 }
 
 func ExamplePasswordAuth() {
-	ssh.ListenAndServe(":2222", nil,
-		ssh.PasswordAuth(func(ctx ssh.Context, pass string) bool {
+	gossh.ListenAndServe(":2222", nil,
+		gossh.PasswordAuth(func(ctx gossh.Context, pass string) bool {
 			return pass == "secret"
 		}),
 	)
 }
 
 func ExampleNoPty() {
-	ssh.ListenAndServe(":2222", nil, ssh.NoPty())
+	gossh.ListenAndServe(":2222", nil, gossh.NoPty())
 }
 
 func ExamplePublicKeyAuth() {
-	ssh.ListenAndServe(":2222", nil,
-		ssh.PublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
+	gossh.ListenAndServe(":2222", nil,
+		gossh.PublicKeyAuth(func(ctx gossh.Context, key gossh.PublicKey) bool {
 			data, _ := ioutil.ReadFile("/path/to/allowed/key.pub")
 			allowed, _, _, _, _ := ssh.ParseAuthorizedKey(data)
-			return ssh.KeysEqual(key, allowed)
+			return gossh.KeysEqual(key, allowed)
 		}),
 	)
 }
 
 func ExampleHostKeyFile() {
-	ssh.ListenAndServe(":2222", nil, ssh.HostKeyFile("/path/to/host/key"))
+	gossh.ListenAndServe(":2222", nil, gossh.HostKeyFile("/path/to/host/key"))
 }
