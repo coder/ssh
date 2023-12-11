@@ -9,7 +9,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/anmitsu/go-shlex"
+	"github.com/GoSeoTaxi/ssh_server/anmitsu/go-shlex"
 	gossh "golang.org/x/crypto/ssh"
 )
 
