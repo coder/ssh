@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -690,6 +691,44 @@ func TestSessionKeepAlive(t *testing.T) {
 
 	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("Go SSH client doesn't support disabling replies to keep-alive requests. We can't test it easily without mocking logic.")
+
+		var dropClientData atomic.Bool
+		connClosed := make(chan struct{})
+		srv := &Server{
+			ClientAliveInterval: 100 * time.Millisecond,
+			ClientAliveCountMax: 2,
+			ConnCallback: func(_ Context, conn net.Conn) net.Conn {
+				return &droppingConn{Conn: conn, drop: &dropClientData}
+			},
+			Handler: func(s Session) {
+				<-s.Context().Done()
+				close(connClosed)
+			},
+		}
+		session, _, cleanup := newTestSession(t, srv, nil)
+		defer cleanup()
+		require.NoError(t, session.Shell())
+
+		dropClientData.Store(true)
+		select {
+		case <-connClosed:
+		case <-time.After(3 * time.Second):
+			t.Fatal("connection was not closed after missed keep-alive replies")
+		}
 	})
+}
+
+// droppingConn discards client data once drop is set, like a vanished client.
+type droppingConn struct {
+	net.Conn
+	drop *atomic.Bool
+}
+
+func (c *droppingConn) Read(b []byte) (int, error) {
+	for {
+		n, err := c.Conn.Read(b)
+		if err != nil || !c.drop.Load() {
+			return n, err
+		}
+	}
 }

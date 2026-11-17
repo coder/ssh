@@ -292,8 +292,8 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 		select {
 		case <-keepAlive.Ticks():
 			if keepAlive.TimeIsUp() {
-				log.Println("Keep-alive reply not received. Close down the session.")
-				_ = sess.Close()
+				log.Println("Keep-alive reply not received. Close down the connection.")
+				_ = sess.conn.Close()
 				return
 			}
 
