@@ -695,7 +695,7 @@ func TestSessionKeepAlive(t *testing.T) {
 		var dropClientData atomic.Bool
 		srv := &Server{
 			ClientAliveInterval: 100 * time.Millisecond,
-			ClientAliveCountMax: 2,
+			ClientAliveCountMax: 1,
 			ConnCallback: func(_ Context, conn net.Conn) net.Conn {
 				return &droppingConn{Conn: conn, drop: &dropClientData}
 			},
@@ -705,6 +705,11 @@ func TestSessionKeepAlive(t *testing.T) {
 		defer cleanup()
 		// Keep-alives must outlive the connection's sessions.
 		require.NoError(t, session.Run(""))
+
+		// A responsive client stays connected past the deadline.
+		time.Sleep(5 * srv.ClientAliveInterval)
+		_, _, err := client.SendRequest("ping", true, nil)
+		require.NoError(t, err)
 
 		dropClientData.Store(true)
 		closed := make(chan error, 1)

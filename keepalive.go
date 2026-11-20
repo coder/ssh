@@ -75,8 +75,8 @@ func (ska *SessionKeepAlive) TimeIsUp() bool {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	// true: Keep-alive reply not received
-	return ska.lastReceived.Add(time.Duration(ska.clientAliveCountMax) * ska.clientAliveInterval).Before(time.Now())
+	// Like OpenSSH, allow CountMax unanswered probes, one per interval.
+	return time.Since(ska.lastReceived) > time.Duration(ska.clientAliveCountMax+1)*ska.clientAliveInterval
 }
 
 func (ska *SessionKeepAlive) Close() {
@@ -103,15 +103,13 @@ type KeepAliveMetrics struct {
 }
 
 // handleKeepAlive probes the client every ClientAliveInterval for the whole
-// connection and closes it after ClientAliveCountMax intervals without a
-// reply, like OpenSSH.
-func handleKeepAlive(ctx Context, conn gossh.Conn) {
-	keepAlive := ctx.KeepAlive()
+// connection and closes it once TimeIsUp.
+func handleKeepAlive(done <-chan struct{}, keepAlive *SessionKeepAlive, conn gossh.Conn) {
 	// One probe at a time; a dead client blocks it until the conn closes.
 	var probing sync.Mutex
 	for {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			return
 		case <-keepAlive.Ticks():
 		}
