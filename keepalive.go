@@ -9,13 +9,14 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+// SessionKeepAlive is the server keep-alive of one connection.
 type SessionKeepAlive struct {
 	clientAliveInterval time.Duration
 	clientAliveCountMax int
 
 	ticker       *time.Ticker
-	tickerCh     <-chan time.Time
 	lastReceived time.Time
+	timedOut     bool
 
 	metrics KeepAliveMetrics
 
@@ -24,20 +25,35 @@ type SessionKeepAlive struct {
 }
 
 func NewSessionKeepAlive(clientAliveInterval time.Duration, clientAliveCountMax int) *SessionKeepAlive {
-	var t *time.Ticker
-	var tickerCh <-chan time.Time
-	if clientAliveInterval > 0 {
-		t = time.NewTicker(clientAliveInterval)
-		tickerCh = t.C
-	}
+	// Stopped until setClientAliveLocked starts it, so Ticks never changes.
+	ska := &SessionKeepAlive{ticker: time.NewTicker(time.Hour)}
+	ska.ticker.Stop()
+	ska.setClientAliveLocked(clientAliveInterval, clientAliveCountMax)
+	return ska
+}
 
-	return &SessionKeepAlive{
-		clientAliveInterval: clientAliveInterval,
-		clientAliveCountMax: clientAliveCountMax,
-		ticker:              t,
-		tickerCh:            tickerCh,
-		lastReceived:        time.Now(),
+// SetClientAlive overrides ClientAliveInterval and ClientAliveCountMax for
+// this connection, like an sshd_config Match block, and restarts the count.
+// A value of zero or less disables the keep-alive.
+func (ska *SessionKeepAlive) SetClientAlive(clientAliveInterval time.Duration, clientAliveCountMax int) {
+	ska.m.Lock()
+	defer ska.m.Unlock()
+
+	if !ska.closed {
+		ska.setClientAliveLocked(clientAliveInterval, clientAliveCountMax)
 	}
+}
+
+func (ska *SessionKeepAlive) setClientAliveLocked(clientAliveInterval time.Duration, clientAliveCountMax int) {
+	if clientAliveInterval > 0 && clientAliveCountMax > 0 {
+		ska.ticker.Reset(clientAliveInterval)
+	} else {
+		clientAliveInterval, clientAliveCountMax = 0, 0
+		ska.ticker.Stop()
+	}
+	ska.clientAliveInterval = clientAliveInterval
+	ska.clientAliveCountMax = clientAliveCountMax
+	ska.lastReceived = time.Now()
 }
 
 func (ska *SessionKeepAlive) RequestHandlerCallback() {
@@ -61,31 +77,51 @@ func (ska *SessionKeepAlive) Reset() {
 
 	ska.metrics.KeepAliveReplyReceived++
 
-	if ska.ticker != nil && !ska.closed {
+	if ska.clientAliveInterval > 0 && !ska.closed {
 		ska.lastReceived = time.Now()
 		ska.ticker.Reset(ska.clientAliveInterval)
 	}
 }
 
 func (ska *SessionKeepAlive) Ticks() <-chan time.Time {
-	return ska.tickerCh
+	return ska.ticker.C
 }
 
 func (ska *SessionKeepAlive) TimeIsUp() bool {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
+	return ska.timeIsUpLocked()
+}
+
+func (ska *SessionKeepAlive) timeIsUpLocked() bool {
 	// Like OpenSSH, allow CountMax unanswered probes, one per interval.
-	return time.Since(ska.lastReceived) > time.Duration(ska.clientAliveCountMax+1)*ska.clientAliveInterval
+	return ska.clientAliveInterval > 0 &&
+		time.Since(ska.lastReceived) > time.Duration(ska.clientAliveCountMax+1)*ska.clientAliveInterval
+}
+
+// TimedOut reports whether the connection was closed because the client
+// stopped answering keep-alives.
+func (ska *SessionKeepAlive) TimedOut() bool {
+	ska.m.Lock()
+	defer ska.m.Unlock()
+
+	return ska.timedOut
+}
+
+func (ska *SessionKeepAlive) markTimedOut() bool {
+	ska.m.Lock()
+	defer ska.m.Unlock()
+
+	ska.timedOut = ska.timeIsUpLocked()
+	return ska.timedOut
 }
 
 func (ska *SessionKeepAlive) Close() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	if ska.ticker != nil {
-		ska.ticker.Stop()
-	}
+	ska.ticker.Stop()
 	ska.closed = true
 }
 
@@ -102,8 +138,8 @@ type KeepAliveMetrics struct {
 	ServerRequestedKeepAlive int
 }
 
-// handleKeepAlive probes the client every ClientAliveInterval for the whole
-// connection and closes it once TimeIsUp.
+// handleKeepAlive probes the client on every tick for the whole connection
+// and closes it once TimeIsUp.
 func handleKeepAlive(done <-chan struct{}, keepAlive *SessionKeepAlive, conn gossh.Conn) {
 	// One probe at a time; a dead client blocks it until the conn closes.
 	var probing sync.Mutex
@@ -113,7 +149,7 @@ func handleKeepAlive(done <-chan struct{}, keepAlive *SessionKeepAlive, conn gos
 			return
 		case <-keepAlive.Ticks():
 		}
-		if keepAlive.TimeIsUp() {
+		if keepAlive.markTimedOut() {
 			log.Println("Keep-alive reply not received. Close down the connection.")
 			_ = conn.Close()
 			return

@@ -312,11 +312,8 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
 	defer ctx.KeepAlive().Close()
-	// HandleConn can be called without Serve's validation.
-	if srv.ClientAliveInterval > 0 && srv.ClientAliveCountMax > 0 {
-		// Read ctx here: SetValue later rewrites it without a lock.
-		go handleKeepAlive(ctx.Done(), ctx.KeepAlive(), sshConn)
-	}
+	// Read ctx here: SetValue later rewrites it without a lock.
+	go handleKeepAlive(ctx.Done(), ctx.KeepAlive(), sshConn)
 	//go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {

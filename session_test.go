@@ -692,32 +692,51 @@ func TestSessionKeepAlive(t *testing.T) {
 	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {
 		t.Parallel()
 
-		var dropClientData atomic.Bool
-		srv := &Server{
-			ClientAliveInterval: 100 * time.Millisecond,
-			ClientAliveCountMax: 1,
-			ConnCallback: func(_ Context, conn net.Conn) net.Conn {
-				return &droppingConn{Conn: conn, drop: &dropClientData}
-			},
-			Handler: func(Session) {},
-		}
-		session, client, cleanup := newTestSession(t, srv, nil)
-		defer cleanup()
-		// Keep-alives must outlive the connection's sessions.
-		require.NoError(t, session.Run(""))
+		const interval = 100 * time.Millisecond
+		for _, perConnection := range []bool{false, true} {
+			perConnection := perConnection
+			t.Run(fmt.Sprintf("perConnection=%v", perConnection), func(t *testing.T) {
+				t.Parallel()
 
-		// A responsive client stays connected past the deadline.
-		time.Sleep(5 * srv.ClientAliveInterval)
-		_, _, err := client.SendRequest("ping", true, nil)
-		require.NoError(t, err)
+				var dropClientData atomic.Bool
+				keepAlives := make(chan *SessionKeepAlive, 1)
+				srv := &Server{
+					ConnCallback: func(_ Context, conn net.Conn) net.Conn {
+						return &droppingConn{Conn: conn, drop: &dropClientData}
+					},
+					Handler: func(s Session) {
+						keepAlive := s.Context().KeepAlive()
+						if perConnection {
+							keepAlive.SetClientAlive(interval, 1)
+						}
+						keepAlives <- keepAlive
+					},
+				}
+				if !perConnection {
+					srv.ClientAliveInterval, srv.ClientAliveCountMax = interval, 1
+				}
+				session, client, cleanup := newTestSession(t, srv, nil)
+				defer cleanup()
+				// Keep-alives must outlive the connection's sessions.
+				require.NoError(t, session.Run(""))
+				keepAlive := <-keepAlives
 
-		dropClientData.Store(true)
-		closed := make(chan error, 1)
-		go func() { closed <- client.Wait() }()
-		select {
-		case <-closed:
-		case <-time.After(3 * time.Second):
-			t.Fatal("connection was not closed after missed keep-alive replies")
+				// A responsive client stays connected past the deadline.
+				time.Sleep(5 * interval)
+				_, _, err := client.SendRequest("ping", true, nil)
+				require.NoError(t, err)
+				require.False(t, keepAlive.TimedOut())
+
+				dropClientData.Store(true)
+				closed := make(chan error, 1)
+				go func() { closed <- client.Wait() }()
+				select {
+				case <-closed:
+				case <-time.After(3 * time.Second):
+					t.Fatal("connection was not closed after missed keep-alive replies")
+				}
+				require.True(t, keepAlive.TimedOut())
+			})
 		}
 	})
 }
