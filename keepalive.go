@@ -102,12 +102,13 @@ type KeepAliveMetrics struct {
 	ServerRequestedKeepAlive int
 }
 
-// handleKeepAlive probes the client once per interval for the lifetime of the
-// connection, sessions or not, and closes the connection once
-// ClientAliveCountMax intervals pass without a reply, like OpenSSH.
+// handleKeepAlive probes the client every ClientAliveInterval for the whole
+// connection and closes it after ClientAliveCountMax intervals without a
+// reply, like OpenSSH.
 func handleKeepAlive(ctx Context, conn gossh.Conn) {
 	keepAlive := ctx.KeepAlive()
-	var inProgress sync.Mutex
+	// One probe at a time; a dead client blocks it until the conn closes.
+	var probing sync.Mutex
 	for {
 		select {
 		case <-ctx.Done():
@@ -119,13 +120,12 @@ func handleKeepAlive(ctx Context, conn gossh.Conn) {
 			_ = conn.Close()
 			return
 		}
-		if !inProgress.TryLock() {
+		if !probing.TryLock() {
 			continue
 		}
 		go func() {
-			defer inProgress.Unlock()
-			// Clients answer a global keepalive@openssh.com request with
-			// success or failure; either counts as alive.
+			defer probing.Unlock()
+			// A success or failure reply both mean the client is alive.
 			_, _, err := conn.SendRequest(keepAliveRequestType, true, nil)
 			keepAlive.ServerRequestedKeepAliveCallback()
 			if err == nil {
