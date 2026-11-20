@@ -693,25 +693,24 @@ func TestSessionKeepAlive(t *testing.T) {
 		t.Parallel()
 
 		var dropClientData atomic.Bool
-		connClosed := make(chan struct{})
 		srv := &Server{
 			ClientAliveInterval: 100 * time.Millisecond,
 			ClientAliveCountMax: 2,
 			ConnCallback: func(_ Context, conn net.Conn) net.Conn {
 				return &droppingConn{Conn: conn, drop: &dropClientData}
 			},
-			Handler: func(s Session) {
-				<-s.Context().Done()
-				close(connClosed)
-			},
+			Handler: func(Session) {},
 		}
-		session, _, cleanup := newTestSession(t, srv, nil)
+		session, client, cleanup := newTestSession(t, srv, nil)
 		defer cleanup()
-		require.NoError(t, session.Shell())
+		// Keep-alives must outlive the connection's sessions.
+		require.NoError(t, session.Run(""))
 
 		dropClientData.Store(true)
+		closed := make(chan error, 1)
+		go func() { closed <- client.Wait() }()
 		select {
-		case <-connClosed:
+		case <-closed:
 		case <-time.After(3 * time.Second):
 			t.Fatal("connection was not closed after missed keep-alive replies")
 		}

@@ -311,6 +311,10 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	applyConnMetadata(ctx, sshConn)
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
+	defer ctx.KeepAlive().Close()
+	if srv.ClientAliveInterval > 0 {
+		go handleKeepAlive(ctx, sshConn)
+	}
 	//go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {

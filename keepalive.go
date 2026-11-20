@@ -1,8 +1,12 @@
 package ssh
 
 import (
+	"io"
+	"log"
 	"sync"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type SessionKeepAlive struct {
@@ -96,4 +100,39 @@ type KeepAliveMetrics struct {
 	RequestHandlerCalled     int
 	KeepAliveReplyReceived   int
 	ServerRequestedKeepAlive int
+}
+
+// handleKeepAlive probes the client once per interval for the lifetime of the
+// connection, sessions or not, and closes the connection once
+// ClientAliveCountMax intervals pass without a reply, like OpenSSH.
+func handleKeepAlive(ctx Context, conn gossh.Conn) {
+	keepAlive := ctx.KeepAlive()
+	var inProgress sync.Mutex
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-keepAlive.Ticks():
+		}
+		if keepAlive.TimeIsUp() {
+			log.Println("Keep-alive reply not received. Close down the connection.")
+			_ = conn.Close()
+			return
+		}
+		if !inProgress.TryLock() {
+			continue
+		}
+		go func() {
+			defer inProgress.Unlock()
+			// Clients answer a global keepalive@openssh.com request with
+			// success or failure; either counts as alive.
+			_, _, err := conn.SendRequest(keepAliveRequestType, true, nil)
+			keepAlive.ServerRequestedKeepAliveCallback()
+			if err == nil {
+				keepAlive.Reset()
+			} else if err != io.EOF {
+				log.Printf("Sending keep-alive request failed: %v", err)
+			}
+		}()
+	}
 }
