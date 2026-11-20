@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -690,6 +691,67 @@ func TestSessionKeepAlive(t *testing.T) {
 
 	t.Run("Server terminates connection due to no keep-alive replies", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("Go SSH client doesn't support disabling replies to keep-alive requests. We can't test it easily without mocking logic.")
+
+		const interval = 100 * time.Millisecond
+		for _, perConnection := range []bool{false, true} {
+			perConnection := perConnection
+			t.Run(fmt.Sprintf("perConnection=%v", perConnection), func(t *testing.T) {
+				t.Parallel()
+
+				var dropClientData atomic.Bool
+				keepAlives := make(chan *SessionKeepAlive, 1)
+				srv := &Server{
+					ConnCallback: func(_ Context, conn net.Conn) net.Conn {
+						return &droppingConn{Conn: conn, drop: &dropClientData}
+					},
+					Handler: func(s Session) {
+						keepAlive := s.Context().KeepAlive()
+						if perConnection {
+							keepAlive.SetClientAlive(interval, 1)
+						}
+						keepAlives <- keepAlive
+					},
+				}
+				if !perConnection {
+					srv.ClientAliveInterval, srv.ClientAliveCountMax = interval, 1
+				}
+				session, client, cleanup := newTestSession(t, srv, nil)
+				defer cleanup()
+				// Keep-alives must outlive the connection's sessions.
+				require.NoError(t, session.Run(""))
+				keepAlive := <-keepAlives
+
+				// A responsive client stays connected past the deadline.
+				time.Sleep(5 * interval)
+				_, _, err := client.SendRequest("ping", true, nil)
+				require.NoError(t, err)
+				require.False(t, keepAlive.TimedOut())
+
+				dropClientData.Store(true)
+				closed := make(chan error, 1)
+				go func() { closed <- client.Wait() }()
+				select {
+				case <-closed:
+				case <-time.After(3 * time.Second):
+					t.Fatal("connection was not closed after missed keep-alive replies")
+				}
+				require.True(t, keepAlive.TimedOut())
+			})
+		}
 	})
+}
+
+// droppingConn discards client data once drop is set, like a vanished client.
+type droppingConn struct {
+	net.Conn
+	drop *atomic.Bool
+}
+
+func (c *droppingConn) Read(b []byte) (int, error) {
+	for {
+		n, err := c.Conn.Read(b)
+		if err != nil || !c.drop.Load() {
+			return n, err
+		}
+	}
 }
